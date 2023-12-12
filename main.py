@@ -17,6 +17,9 @@ State -
 pygame.init()
 pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
 bounceSound = pygame.mixer.Sound("bounce.ogg")
+outSound = pygame.mixer.Sound("out.ogg")
+p0HitSound = pygame.mixer.Sound("hit0.ogg")
+p1HitSound = pygame.mixer.Sound("hit1.ogg")
 os.environ['SDL_VIDEO_WINDOW_POS'] = 'center'
 pygame.display.set_caption("Ping Pong - 1 Player Mode")
 screenWidth = 500
@@ -53,25 +56,25 @@ limit = [0, 0, 0, 0, 0, 0]  # wall limits and bat limits
 ball_radius = 8
 rally = True
 pause = True
-score = 0
-best = 0  # high score
-balls = 3  # number of balls in a turn
+server = 0 # player to serve
+serve = [False, False]
+score = [0, 0]
+balls = 5  # number of balls in a turn
 balls_left = balls
+bat_middle = (ball_radius - (bat_height + ball_radius)) / 2
 
 
 def main():
-    global ball_position, rally, balls, pause, score, best
+    global ball_position, rally, balls, pause, score, server
     update_box(0, 0)  # setup wall limits
     update_score()
     screen.blit(background, [0, 0])
     while True:
         balls_left = balls
-        if score > best:
-            best = score
-        score = 0
+        score = [0, 0]
         update_score()
         while balls_left > 0:
-            ball_position = wait_for_serve(ball_position)
+            ball_position = wait_for_serve(ball_position, server)
             while rally:
                 check_for_event()
                 draw_screen(ball_position)
@@ -83,28 +86,34 @@ def main():
             check_for_event()
 
 
-def wait_for_serve(p):
-    global bat_y, rally, delta
+def wait_for_serve(p, player):
+    global bat_y, rally, delta, serve
     computer_bat_delta = 2
-    serve_time = time.time() + 2.0  # auto serve!
+    serve[player] = False
+    serve_time = time.time() + 4.0  # auto serve!
     while time.time() < serve_time:
         check_for_event()
         draw_screen(ball_position)
-        bat_y[0] += computer_bat_delta
+        bat_y[player] += computer_bat_delta
 
         # move bat up and down while waiting
-        if bat_y[0] > limit[3] or bat_y[0] < limit[2]:
+        if bat_y[player] > limit[3] or bat_y[player] < limit[2]:
             computer_bat_delta = -computer_bat_delta
 
-    p[0] = bat_x[0]
-    p[1] = bat_y[0]
+    p[0] = bat_x[player]
+    p[1] = bat_y[player]
     delta = delta_choice[random.randint(0, max_delta)]
+    if player == 1:
+        delta[0] = -delta[0]
+        p1HitSound.play()
+    else:
+        p0HitSound.play()
     rally = True
     return p
 
 
 def move_ball(p):
-    global delta, bat_y, rally, score, bat_thick
+    global delta, bat_y, rally, score, bat_thick, server
 
     # move ball
     p[0] += delta[0]
@@ -124,38 +133,32 @@ def move_ball(p):
 
     # player 1 miss?
     elif p[0] <= limit[0]:
-        p[0] = limit[0]
+        outSound.play()
         rally = False
-        print("missed ball")
+        score[1] += 1
+        server = 0
+        p[0] = hw
+        update_score()
 
     # player 2 miss?
     elif p[0] >= limit[1]:
-        p[0] = limit[1]
+        outSound.play()
         rally = False
-        print("missed ball")
+        score[0] += 1
+        server = 1
+        p[0] = hw
+        update_score()
 
     # test left bat collision
     elif is_bat_hit(p, 0): #
-        bounceSound.play()
+        bat_bounce(p[1], bat_y[0], 0)
         p[0] = limit[4]
-        delta[0] = random.randint(5, 15)
-        if random.randint(1, 4) > 2:
-            # random change in y direction
-            delta[1] = 16 - delta[0]
-        else:
-            delta[1] = -(16 - delta[0])
 
     # test right bat collision
-    # is_right_bat_hit(ball, bat_index)
     elif is_bat_hit(p, 1):
-        bounceSound.play()
-        delta[0] = -delta[0]
+        bat_bounce(p[1], bat_y[1], 1)
         p[0] = limit[5]
-        score += 1
-        update_score()
 
-    bat_y[0] = p[1] - ball_radius  # make auto opponent follow bat
-    # bat_y[1] = p[1] + ball_radius  # temporary test for auto player
     return p
 
 def is_bat_hit(p, bat_index):
@@ -175,12 +178,25 @@ def is_bat_hit(p, bat_index):
                     return True
     return False
 
+
+def bat_bounce(ball, bat, player):
+    global delta
+    point = bat - ball
+    delta[1] = int(-14.0 * ((point * 0.05) + 0.6))
+    delta[0] = 16 - abs(delta[1])
+    if player == 1:
+        delta[0] = -delta[0]
+        p1HitSound.play()
+    else:
+        p0HitSound.play()
+
 def update_score():
-    global score, best, score_rect, scoreSurface
-    scoreSurface = font.render(str(best) + " : " + str(score), True, text_color, background_color)
+    global score_rect, scoreSurface
+    scoreSurface = font.render(str(score[0]) + " : " + str(score[1]), True, text_color, background_color)
     score_rect = scoreSurface.get_rect()
     score_rect.centerx = hw
     score_rect.centery = 24
+    draw_screen(ball_position)
 
 
 def draw_screen(p):
@@ -228,7 +244,7 @@ def terminate():
 
 
 def check_for_event():
-    global bat_y, rally, pause
+    global bat_y, rally, pause, serve
     event = pygame.event.poll()
     if event.type == pygame.QUIT:
         terminate()
@@ -255,6 +271,20 @@ def check_for_event():
 
         if event.key == pygame.K_SPACE:
             pause = False
+
+        if event.key == pygame.K_q:
+            serve[0] = True
+
+        if event.key == pygame.K_HOME:
+            serve[1] = True
+
+        if event.key == pygame.K_z:
+            if bat_y[0] < screenHeight - bat_increment:
+                bat_y[0] += bat_increment
+
+        if event.key == pygame.K_a:
+            if bat_y[0] > bat_increment:
+                bat_y[0] -= bat_increment
 
         if event.key == pygame.K_PAGEDOWN:
             if bat_y[1] < screenHeight - bat_increment:
